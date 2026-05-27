@@ -1,0 +1,7 @@
+python-telegram-bot==21.0.1
+langchain
+langchain-google-genai
+langchain-community
+langchain-core
+duckduckgo-search
+python-dotenv
