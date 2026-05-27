@@ -1,7 +1,9 @@
 import sqlite3
 from datetime import datetime
+import os
 
-DB_PATH = "bot_images.db"
+MODULE_DIR = os.path.dirname(__file__)
+DB_PATH = os.path.join(MODULE_DIR, "bot_images.db")
 
 def initialize_db():
     """Creates the database file and the images table if they don't exist."""

@@ -3,12 +3,31 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.tools import tool
+import os
 
 # Embeddings (se carga una sola vez)
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
 # Base de vectorstores por usuario { user_id: Chroma }
 user_vectorstores = {}
+PDF_STORE_DIR = os.path.join(os.path.dirname(__file__), "..", "database", "pdf_store")
+PDF_STORE_DIR = os.path.abspath(PDF_STORE_DIR)
+os.makedirs(PDF_STORE_DIR, exist_ok=True)
+
+
+def _collection_name(user_id: int) -> str:
+    return f"user_{user_id}"
+
+
+def get_user_vectorstore(user_id: int) -> Chroma:
+    """Return the in-memory cache or reopen the persisted collection for a user."""
+    if user_id not in user_vectorstores:
+        user_vectorstores[user_id] = Chroma(
+            embedding_function=embeddings,
+            collection_name=_collection_name(user_id),
+            persist_directory=PDF_STORE_DIR,
+        )
+    return user_vectorstores[user_id]
 
 
 def process_pdf(user_id: int, file_path: str) -> str:
@@ -23,10 +42,7 @@ def process_pdf(user_id: int, file_path: str) -> str:
         chunks = splitter.split_documents(docs)
 
         # 3. Guardar en vectorstore del usuario
-        vectorstore = Chroma(
-            embedding_function=embeddings,
-            collection_name=f"user_{user_id}",  # colección separada por usuario
-        )
+        vectorstore = get_user_vectorstore(user_id)
         vectorstore.add_documents(chunks)
         user_vectorstores[user_id] = vectorstore
 
@@ -44,11 +60,8 @@ def get_pdf_tool(user_id: int):
         """Busca información dentro del PDF que el usuario subió.
         Usá esta tool cuando el usuario pregunte sobre el contenido de su documento."""
 
-        if user_id not in user_vectorstores:
-            return "El usuario no ha subido ningún PDF todavía."
-
-        retriever = user_vectorstores[user_id].as_retriever(search_kwargs={"k": 4})
-        docs = retriever.invoke(pregunta)
+        vectorstore = get_user_vectorstore(user_id)
+        docs = vectorstore.as_retriever(search_kwargs={"k": 4}).invoke(pregunta)
 
         if not docs:
             return "No encontré información relevante en el PDF."
