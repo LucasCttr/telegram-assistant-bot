@@ -3,5 +3,5 @@ langchain
 langchain-google-genai
 langchain-community
 langchain-core
-duckduckgo-search
+ddgs
 python-dotenv
