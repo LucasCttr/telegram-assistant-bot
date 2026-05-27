@@ -3,7 +3,6 @@ import re
 from ddgs import DDGS
 from langchain_core.tools import tool
 
-
 STOPWORDS = {
     "a",
     "al",
@@ -23,7 +22,6 @@ STOPWORDS = {
     "una",
     "y",
 }
-
 
 def _tokenize(text: str) -> set[str]:
     words = re.findall(r"[a-zA-Z0-9áéíóúñü]+", text.lower())
@@ -66,8 +64,6 @@ def search_tool(query: str) -> str:
 
     tokens = _tokenize(query)
     query_variants = [query]
-    if "btc" in query.lower():
-        query_variants.append(query.lower().replace("btc", "bitcoin"))
 
     try:
         with DDGS() as ddgs:

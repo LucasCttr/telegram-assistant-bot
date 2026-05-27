@@ -5,3 +5,4 @@ langchain-community
 langchain-core
 ddgs
 python-dotenv
+google-genai

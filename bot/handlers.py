@@ -1,10 +1,19 @@
+import base64
+from datetime import datetime
+import os
+from agent.memory import get_memory
 from telegram import Update
 from telegram.ext import ContextTypes
 from bot.keyboards import model_selection_keyboard
 from agent.agent import get_agent
+from database.database import save_image
+from tools.pdf import process_pdf
 
 # Guardamos el modelo elegido por cada usuario
 user_models = {}
+CARPETA_IMAGENES = "../stored_images"
+os.makedirs(CARPETA_IMAGENES, exist_ok=True)
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -17,19 +26,106 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer()
 
     user_id = query.from_user.id
-    model = query.data  # "gemini-1.5-flash", "groq-llama" o "groq-mixtral"
+    model = query.data  # "gemini-2.5-flash", "groq-llama" o "groq-mixtral"
 
     user_models[user_id] = model
 
     model_names = {
-        "gemini-1.5-flash": "🟢 Gemini 1.5 Flash",
+        "gemini-2.5-flash": "🟢 Gemini 2.5 Flash",
         "groq-llama": "⚡ Groq Llama",
-        "groq-mixtral": "🔵 Groq Mixtral",
+        # "groq-mixtral": "🔵 Groq Mixtral",
     }
 
+    selected_model_name = model_names.get(model, model)
+
     await query.edit_message_text(
-        f"Perfecto, usando {model_names[model]}. ¡Preguntame lo que quieras!"
+        f"Perfecto, usando {selected_model_name}. ¡Preguntame lo que quieras!"
     )
+
+async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+
+    # Si no eligió modelo todavía
+    if user_id not in user_models:
+        await update.message.reply_text(
+            "Primero elegí un modelo:",
+            reply_markup=model_selection_keyboard()
+        )
+        return
+
+    await update.message.reply_text("📄 Recibí tu PDF, procesando...")
+    await update.message.chat.send_action("typing")
+
+    try:
+        # Descargar el PDF de Telegram
+        file = await context.bot.get_file(update.message.document.file_id)
+        file_path = f"/tmp/{user_id}_{update.message.document.file_name}"
+        await file.download_to_drive(file_path)
+
+        # Procesar el PDF
+        result = process_pdf(user_id, file_path)
+        await update.message.reply_text(result)
+
+        # Limpiar archivo temporal
+        os.remove(file_path)
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error al procesar el PDF: {str(e)}")
+
+
+async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+
+    if user_id not in user_models:
+        await update.message.reply_text(
+            "Primero elegí un modelo:",
+            reply_markup=model_selection_keyboard()
+        )
+        return
+
+    user_caption = update.message.caption if update.message.caption else "Describí esta imagen en detalle."
+
+    await update.message.reply_text("📥 Procesando tu imagen...")
+    await update.message.chat.send_action("typing")
+
+    try:
+        # 1. Descargar imagen
+        photo_file = await context.bot.get_file(update.message.photo[-1].file_id)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_path = os.path.join(CARPETA_IMAGENES, f"{user_id}_{timestamp}.jpg")
+        await photo_file.download_to_drive(file_path)
+
+        # 2. Convertir a base64
+        with open(file_path, "rb") as f:
+            image_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+        # 3. Mandar imagen + pregunta DIRECTO al LLM
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        from langchain_core.messages import HumanMessage
+
+        vision_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+        
+        message = HumanMessage(content=[
+            {"type": "text", "text": user_caption},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+        ])
+        
+        response = vision_llm.invoke([message])
+
+        # 4. Guardar imagen + respuesta en memoria del agente
+        memory = get_memory(user_id)
+        memory.save_context(
+            {"input": f"[El usuario mandó una imagen] {user_caption}"},
+            {"output": response.content}
+        )
+
+        await update.message.reply_text(response.content)
+        save_image(user_id, file_path)
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id

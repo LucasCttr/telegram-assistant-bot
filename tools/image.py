@@ -1,0 +1,1 @@
+# Implementado en el handler de imágenes
