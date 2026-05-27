@@ -1,4 +1,5 @@
 import base64
+import asyncio
 from datetime import datetime
 import os
 from agent.memory import get_memory
@@ -11,7 +12,8 @@ from tools.pdf import process_pdf
 
 # Guardamos el modelo elegido por cada usuario
 user_models = {}
-CARPETA_IMAGENES = "../stored_images"
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+CARPETA_IMAGENES = os.path.join(PROJECT_ROOT, "stored_images")
 os.makedirs(CARPETA_IMAGENES, exist_ok=True)
 
 
@@ -26,14 +28,18 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer()
 
     user_id = query.from_user.id
-    model = query.data  # "gemini-2.5-flash", "groq-llama" o "groq-mixtral"
+    model = query.data
+
+    if model != "gemini-2.5-flash":
+        await query.edit_message_text(
+            "Ese modelo no está habilitado. Por ahora solo está disponible 🟢 Gemini 2.5 Flash."
+        )
+        return
 
     user_models[user_id] = model
 
     model_names = {
         "gemini-2.5-flash": "🟢 Gemini 2.5 Flash",
-        "groq-llama": "⚡ Groq Llama",
-        # "groq-mixtral": "🔵 Groq Mixtral",
     }
 
     selected_model_name = model_names.get(model, model)
@@ -44,6 +50,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
 
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
+    file_path = None
 
     # Si no eligió modelo todavía
     if user_id not in user_models:
@@ -63,18 +70,19 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await file.download_to_drive(file_path)
 
         # Procesar el PDF
-        result = process_pdf(user_id, file_path)
+        result = await asyncio.to_thread(process_pdf, user_id, file_path)
         await update.message.reply_text(result)
-
-        # Limpiar archivo temporal
-        os.remove(file_path)
 
     except Exception as e:
         await update.message.reply_text(f"❌ Error al procesar el PDF: {str(e)}")
+    finally:
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
 
 
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
+    file_path = None
 
     if user_id not in user_models:
         await update.message.reply_text(
@@ -110,17 +118,18 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
         ])
         
-        response = vision_llm.invoke([message])
+        response = await asyncio.to_thread(vision_llm.invoke, [message])
 
         # 4. Guardar imagen + respuesta en memoria del agente
         memory = get_memory(user_id)
-        memory.save_context(
+        await asyncio.to_thread(
+            memory.save_context,
             {"input": f"[El usuario mandó una imagen] {user_caption}"},
-            {"output": response.content}
+            {"output": response.content},
         )
 
         await update.message.reply_text(response.content)
-        save_image(user_id, file_path)
+        await asyncio.to_thread(save_image, user_id, file_path)
 
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {str(e)}")
@@ -144,7 +153,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         model = user_models[user_id]
         agent = get_agent(user_id, model)
-        response = agent.invoke({"input": user_input})
+        response = await asyncio.to_thread(agent.invoke, {"input": user_input})
         await update.message.reply_text(response["output"])
     except Exception as e:
         await update.message.reply_text(f"❌ Ocurrió un error: {str(e)}")

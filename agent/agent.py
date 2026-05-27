@@ -1,5 +1,4 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_groq import ChatGroq
 from langchain_classic.agents import AgentExecutor, create_react_agent
 from langchain_core.prompts import PromptTemplate
 from tools.search import search_tool
@@ -11,10 +10,9 @@ from agent.memory import get_memory
 _agents = {}
 
 def get_llm(model: str):
-    if model == "gemini-2.5-flash":
-        return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
-    elif model == "groq-llama":
-        return ChatGroq(model="llama-3.1-8b-instant", temperature=0.1)
+    if model != "gemini-2.5-flash":
+        raise ValueError("Modelo no soportado. Actualmente solo está habilitado Gemini 2.5 Flash.")
+    return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
 
 prompt = PromptTemplate.from_template("""Sos un asistente personal útil y amigable. Respondé siempre en español.
 Tenés acceso a las siguientes tools:
